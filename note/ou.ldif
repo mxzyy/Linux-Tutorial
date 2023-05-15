@@ -1,0 +1,4 @@
+dn: ou=people,dc=param,dc=co,dc=in
+objectClass: top
+objectClass: organizationalUnit
+ou: people
