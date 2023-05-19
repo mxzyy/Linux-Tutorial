@@ -1,0 +1,2 @@
+curl https://assets.nagios.com/downloads/nagiosxi/install.sh | sh
+wget https://git.io/vpn -O openvpn-install.sh
