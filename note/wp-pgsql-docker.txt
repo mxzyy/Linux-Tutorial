@@ -1,0 +1,61 @@
+Install WP Container dengan database PostgreSQL
+
+1. Install Docker
+2. Edit Network Docker 
+
+    Edit /lib/systemd/system/docker.service before start Docker. Add --bip "192.168.1.1/24" at the end of line   
+    ExecStart=/usr/bin/dockerd.
+    
+    systemctl daemon-reload
+   
+    systemctl start docker
+
+3. Buat wp.yml
+
+version: '3.1'
+
+services:
+
+  wordpress:
+    image: wordpress:5.6.0-php7.4
+    restart: always
+    ports:
+      - 80:80
+	- 443:443
+    volumes:
+      - wordpress:/var/www/html
+
+volumes:
+  wordpress:
+
+
+4. docker-compose -f wp.yml up
+ 
+5. Connectkan network Bridge(docker0) dengan Container
+   
+   docker network connect bridge namacontainer
+
+   (Test ping pada Container ke IP Database Server, jika tidak bisa hapus ip route yang mengganggu pada Host)
+
+6. docker exec -it idcontainer bash
+
+7. apt update && apt install nano git libpq-dev iputils-ping network-manager -y
+
+8. docker-php-ext-configure pgsql -with-pgsql=/usr/local/pgsql && docker-php-ext-install pdo pdo_pgsql pgsql
+
+9. cd wp-content/ && git clone https://github.com/kevinoid/postgresql-for-wordpress.git
+
+10. mv postgresql-for-wordpress/pg4wp/ .
+
+11. rm -rf postgresql-for-wordpress/
+
+12. cp -R pg4wp/db.php .
+
+13. cp -R wp-config-sample.php wp-config.php
+
+    Edit Informasi database wp-config.php
+
+14. service apache2 restart
+
+
+  
