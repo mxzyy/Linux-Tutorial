@@ -1,0 +1,4 @@
+tar -xf roundcubemail-1.5.2-complete.tar.gz -C /var/www/rodcube/ --strip-components=1
+chown -R www-data:www-data /var/www/roundcube/
+chmod -R 775 /var/www/roundcube/
+a2enmod deflate expires headers rewrite
