@@ -1,0 +1,9 @@
+Windows server checkup
+
+1. C:/Windows/System32/Sysprep
+2. Win + R run " inetcpl.cpl " then enable download file
+3. IIS Manager > Handler Mappings > Add Module Mapping
+ Req path = *.php
+ Module = FastCgiModule
+ Exe Path = php file/php-cgi.exe
+ Name = what u want
