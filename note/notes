@@ -1,0 +1,6 @@
+curl https://assets.nagios.com/downloads/nagiosxi/install.sh | sh
+
+wget https://git.io/vpn -O openvpn-install.sh
+add data-ciphers
+add auth-user-pass
+add auth-ldap.so
