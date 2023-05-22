@@ -1,0 +1,3 @@
+openssl pkcs12 -in [yourfile.pfx] -nocerts -out [drlive.key]
+openssl pkcs12 -in [yourfile.pfx] -clcerts -nokeys -out [drlive.crt]
+openssl rsa -in [drlive.key] -out [drlive-decrypted.key]
