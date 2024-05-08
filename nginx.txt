@@ -1,0 +1,1130 @@
+# HTTPS Proxy Configuration
+#
+server
+{
+    server_name             mail.domain1.com;
+    #listen                  8443 ipv6only=off ssl http2;
+    listen                  8443 ssl http2;
+    #listen                  8443 ssl http2;
+
+    client_max_body_size    0;
+    ssl_protocols            TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache       shared:SSL:10m;
+    ssl_session_timeout     600;
+    ssl_ciphers             ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128:AES256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4;
+    ssl_ecdh_curve          prime256v1;
+    ssl_certificate         /opt/zimbra/conf/domaincerts/mail.domain1.com.crt;
+    ssl_certificate_key     /opt/zimbra/conf/domaincerts/mail.domain1.com.key;
+    ssl_verify_client       off;
+    proxy_ssl_protocols            TLSv1 TLSv1.1 TLSv1.2;
+    proxy_ssl_ciphers             ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128:AES256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4;
+    ssl_dhparam             /opt/zimbra/conf/dhparam.pem;
+    include                 /opt/zimbra/conf/nginx/includes/nginx.conf.web.https.mode-https;
+
+    set $login_upstream     https://zimbra_login_ssl;
+    if ($http_cookie ~ "ZM_AUTH_TOKEN=") {
+        set $login_upstream    https://zimbra_ssl_webclient;
+    }
+
+     location = //
+     {
+         set $mailhostport 80;   # replace this with *the* mailhost port
+         set $relhost $host;
+
+         if ($mailhostport != 80) {   # standard HTTP port, do not replace
+             set $relhost $host:$mailhostport;
+         }
+
+         # Proxy to Zimbra Login Upstream
+         proxy_pass          $login_upstream;
+
+         # For audit
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+         # For Virtual Hosting
+         set $virtual_host $http_host;
+         if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+         }
+         proxy_set_header Host            $virtual_host;
+
+         # Location header fudging
+         # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+         # redirects to http:// coming from the upstream need to be fudged
+         # to https://
+         #
+         proxy_redirect http://$http_host/ https://$http_host/;
+
+         # Fudge inter-mailbox redirects (kludge)
+         proxy_redirect http://$relhost/ https://$http_host/;
+     }
+
+     location = /
+     {
+         set $mailhostport 80;   # replace this with *the* mailhost port
+         set $relhost $host;
+
+         if ($mailhostport != 80) {   # standard HTTP port, do not replace
+             set $relhost $host:$mailhostport;
+         }
+
+         # Proxy to Zimbra Login Upstream
+         proxy_pass          $login_upstream;
+
+         # For audit
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+         # For Virtual Hosting
+         set $virtual_host $http_host;
+         if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+         }
+         proxy_set_header Host            $virtual_host;
+
+         # Location header fudging
+         # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+         # redirects to http:// coming from the upstream need to be fudged
+         # to https://
+         #
+         proxy_redirect http://$http_host/ https://$http_host/;
+
+         # Fudge inter-mailbox redirects (kludge)
+         proxy_redirect http://$relhost/ https://$http_host/;
+     }
+
+    location /
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Webclient Upstream
+        proxy_pass       https://zimbra_ssl_webclient;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, zimbraReverseProxyAvailableLookupTargetstherefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    #For long polling of Microsoft ActiveSync
+    location ^~ /Microsoft-Server-ActiveSync
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  3600;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /zx/ws-
+    {
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_pass https://zx_ssl;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $http_host;
+      proxy_http_version 1.1;
+    }
+
+    location ^~ /zx/
+    {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_pass https://zx_ssl;
+    }
+
+    location ~* /service/extension/drive/(.*)/(.*)$
+                {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream servers, with large buffers
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+
+        # We need to set a lower temporary filesize to force nginx to ask data more
+        # frequently to jetty.
+        # 8M -> lower limit of ~140kb/sec
+        # 4M -> lower limit of ~70kb/sec
+        # Adjust it according to your users' needs.
+        proxy_max_temp_file_size 8M;
+    }
+
+    # For NoOpRequest
+    location ^~ /service/soap/NoOpRequest {
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    # For WaitSetRequest
+    location ^~ /service/soap/WaitSetRequest {
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /autodiscover
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        set $autodiscover_upstream     https://zimbra_ssl;
+        #    if ($http_user_agent ~ "ExchangeWebServices") {
+        #       set $autodiscover_upstream    https://zimbra_ews_ssl;
+        #    }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Mailbox Upstream
+        proxy_pass       $autodiscover_upstream;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /nginx_status {
+        # Location block to enable the stub status module
+
+        stub_status on;
+        access_log off;
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+    }
+
+    # location ^~ /http-bind
+    # {
+    #     # Proxy to external XMPP server
+    #     proxy_pass          http://:0;
+    #     proxy_read_timeout  90;
+    #     proxy_buffering     off;
+    #
+    #     # For audit
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #
+    #     # For Virtual Hosting
+    #     set $virtual_host $http_host;
+    #     if ($virtual_host = '') {
+    #         set $virtual_host $server_addr:$server_port;
+    #     }
+    #     proxy_set_header Host            $virtual_host;
+    # }
+
+    # location ~* ^/ews/Exchange.asmx
+    # {
+    #     # Proxy to Zimbra Upstream
+    #     proxy_pass          https://zimbra_ews_ssl;
+    #     proxy_read_timeout  3600;
+    #     proxy_buffering     off;
+    #
+    #     # For audit
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #
+    #     # For Virtual Hosting
+    #     set $virtual_host $http_host;
+    #     if ($virtual_host = '') {
+    #        set $virtual_host $server_name:$server_port;
+    #     }
+    #     proxy_set_header Host            $virtual_host;
+    #
+    #     # Location header fudging
+    #     # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+    #     # redirects to http:// coming from the upstream need to be fudged
+    #     # to https://
+    #     #
+    #     proxy_redirect http://$http_host/ https://$http_host/;
+    #
+    #     # Fudge inter-mailbox redirects (kludge)
+    #     proxy_redirect http://$relhost/ https://$http_host/;
+    # }
+
+    location ~* /(service|principals|dav|\.well-known|home|octopus|shf|user|certauth|spnegoauth|(zimbra/home)|(zimbra/user))/
+    {
+        # ZBUG-2706 Memcached poisoning with unauthenticated request
+        if ($request_uri ~* "%0A|%0D") {
+            return 403;
+        }
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Mailbox Upstream
+        proxy_pass       https://zimbra_ssl;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ~* ^/zmerror_.*\.html$ {
+        # for custom error pages, internal use only
+        internal;
+    }
+
+    include                 /opt/zimbra/conf/nginx/includes/nginx.conf.docs.common;
+}
+
+
+server
+{
+    server_name             mail.domain2.com;
+    #listen                  8443 ipv6only=off ssl http2;
+    listen                  8443 ssl http2;
+    #listen                  8443 ssl http2;
+
+    client_max_body_size    0;
+    ssl_protocols            TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache       shared:SSL:10m;
+    ssl_session_timeout     600;
+    ssl_ciphers             ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128:AES256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4;
+    ssl_ecdh_curve          prime256v1;
+    ssl_certificate         /opt/zimbra/conf/domaincerts/mail.domain2.com.crt;
+    ssl_certificate_key     /opt/zimbra/conf/domaincerts/mail.domain2.com.key;
+    ssl_verify_client       off;
+    proxy_ssl_protocols            TLSv1 TLSv1.1 TLSv1.2;
+    proxy_ssl_ciphers             ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128:AES256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4;
+    ssl_dhparam             /opt/zimbra/conf/dhparam.pem;
+    include                 /opt/zimbra/conf/nginx/includes/nginx.conf.web.https.mode-https;
+
+    set $login_upstream     https://zimbra_login_ssl;
+    if ($http_cookie ~ "ZM_AUTH_TOKEN=") {
+        set $login_upstream    https://zimbra_ssl_webclient;
+    }
+
+     location = //
+     {
+         set $mailhostport 80;   # replace this with *the* mailhost port
+         set $relhost $host;
+
+         if ($mailhostport != 80) {   # standard HTTP port, do not replace
+             set $relhost $host:$mailhostport;
+         }
+
+         # Proxy to Zimbra Login Upstream
+         proxy_pass          $login_upstream;
+
+         # For audit
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+         # For Virtual Hosting
+         set $virtual_host $http_host;
+         if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+         }
+         proxy_set_header Host            $virtual_host;
+
+         # Location header fudging
+         # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+         # redirects to http:// coming from the upstream need to be fudged
+         # to https://
+         #
+         proxy_redirect http://$http_host/ https://$http_host/;
+
+         # Fudge inter-mailbox redirects (kludge)
+         proxy_redirect http://$relhost/ https://$http_host/;
+     }
+
+     location = /
+     {
+         set $mailhostport 80;   # replace this with *the* mailhost port
+         set $relhost $host;
+
+         if ($mailhostport != 80) {   # standard HTTP port, do not replace
+             set $relhost $host:$mailhostport;
+         }
+
+         # Proxy to Zimbra Login Upstream
+         proxy_pass          $login_upstream;
+
+         # For audit
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+         # For Virtual Hosting
+         set $virtual_host $http_host;
+         if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+         }
+         proxy_set_header Host            $virtual_host;
+
+         # Location header fudging
+         # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+         # redirects to http:// coming from the upstream need to be fudged
+         # to https://
+         #
+         proxy_redirect http://$http_host/ https://$http_host/;
+
+         # Fudge inter-mailbox redirects (kludge)
+         proxy_redirect http://$relhost/ https://$http_host/;
+     }
+
+    location /
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Webclient Upstream
+        proxy_pass       https://zimbra_ssl_webclient;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, zimbraReverseProxyAvailableLookupTargetstherefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    #For long polling of Microsoft ActiveSync
+    location ^~ /Microsoft-Server-ActiveSync
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  3600;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /zx/ws-
+    {
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_pass https://zx_ssl;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $http_host;
+      proxy_http_version 1.1;
+    }
+
+    location ^~ /zx/
+    {
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_pass https://zx_ssl;
+    }
+
+    location ~* /service/extension/drive/(.*)/(.*)$
+                {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream servers, with large buffers
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+
+        # We need to set a lower temporary filesize to force nginx to ask data more
+        # frequently to jetty.
+        # 8M -> lower limit of ~140kb/sec
+        # 4M -> lower limit of ~70kb/sec
+        # Adjust it according to your users' needs.
+        proxy_max_temp_file_size 8M;
+    }
+
+    # For NoOpRequest
+    location ^~ /service/soap/NoOpRequest {
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    # For WaitSetRequest
+    location ^~ /service/soap/WaitSetRequest {
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Upstream
+        proxy_pass          https://zimbra_ssl;
+        proxy_read_timeout  1220;
+        proxy_buffering     off;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /autodiscover
+    {
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        set $autodiscover_upstream     https://zimbra_ssl;
+        #    if ($http_user_agent ~ "ExchangeWebServices") {
+        #       set $autodiscover_upstream    https://zimbra_ews_ssl;
+        #    }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Mailbox Upstream
+        proxy_pass       $autodiscover_upstream;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ^~ /nginx_status {
+        # Location block to enable the stub status module
+
+        stub_status on;
+        access_log off;
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+    }
+
+    # location ^~ /http-bind
+    # {
+    #     # Proxy to external XMPP server
+    #     proxy_pass          http://:0;
+    #     proxy_read_timeout  90;
+    #     proxy_buffering     off;
+    #
+    #     # For audit
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #
+    #     # For Virtual Hosting
+    #     set $virtual_host $http_host;
+    #     if ($virtual_host = '') {
+    #         set $virtual_host $server_addr:$server_port;
+    #     }
+    #     proxy_set_header Host            $virtual_host;
+    # }
+
+    # location ~* ^/ews/Exchange.asmx
+    # {
+    #     # Proxy to Zimbra Upstream
+    #     proxy_pass          https://zimbra_ews_ssl;
+    #     proxy_read_timeout  3600;
+    #     proxy_buffering     off;
+    #
+    #     # For audit
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #
+    #     # For Virtual Hosting
+    #     set $virtual_host $http_host;
+    #     if ($virtual_host = '') {
+    #        set $virtual_host $server_name:$server_port;
+    #     }
+    #     proxy_set_header Host            $virtual_host;
+    #
+    #     # Location header fudging
+    #     # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+    #     # redirects to http:// coming from the upstream need to be fudged
+    #     # to https://
+    #     #
+    #     proxy_redirect http://$http_host/ https://$http_host/;
+    #
+    #     # Fudge inter-mailbox redirects (kludge)
+    #     proxy_redirect http://$relhost/ https://$http_host/;
+    # }
+
+    location ~* /(service|principals|dav|\.well-known|home|octopus|shf|user|certauth|spnegoauth|(zimbra/home)|(zimbra/user))/
+    {
+        # ZBUG-2706 Memcached poisoning with unauthenticated request
+        if ($request_uri ~* "%0A|%0D") {
+            return 403;
+        }
+
+        # Begin stray redirect hack
+        #
+        # In some cases, we may get a stray redirect out of the mailhost,
+        # which attempts to send us to $host:$mailhostport, where:
+        #
+        # $host is the host portion (excluding port) of the proxy URL
+        # $mailhostport is the zimbraMailPort as applies to the mailhost
+        #   server being redirected to
+        #
+        # This is the case when one mailhost in the upstream cluster is
+        # trying to redirect to another mailhost in the same cluster
+        # In this case, we need to trap and fudge this location header
+        #
+        # NOTE that this will only work in the cases where each mailhost
+        # within the cluster has the same mailhostport (Limitation)
+        #
+
+        set $mailhostport 80;   # replace this with *the* mailhost port
+        set $relhost $host;
+
+        if ($mailhostport != 80) {   # standard HTTP port, do not replace
+            set $relhost $host:$mailhostport;
+        }
+
+        # End stray redirect hack
+
+        # Proxy to Zimbra Mailbox Upstream
+        proxy_pass       https://zimbra_ssl;
+
+        # For audit
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # For Virtual Hosting
+        set $virtual_host $http_host;
+        if ($virtual_host = '') {
+            set $virtual_host $server_name:$server_port;
+        }
+        proxy_set_header Host            $virtual_host;
+
+        # Location header fudging
+        # Because NGINX SSL speaks plain HTTP to upstream, therefore any
+        # redirects to http:// coming from the upstream need to be fudged
+        # to https://
+        #
+        proxy_redirect http://$http_host/ https://$http_host/;
+
+        # Fudge inter-mailbox redirects (kludge)
+        proxy_redirect http://$relhost/ https://$http_host/;
+    }
+
+    location ~* ^/zmerror_.*\.html$ {
+        # for custom error pages, internal use only
+        internal;
+    }
+
+    include                 /opt/zimbra/conf/nginx/includes/nginx.conf.docs.common;
+}
