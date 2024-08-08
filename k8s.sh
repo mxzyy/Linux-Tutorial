@@ -1,5 +1,5 @@
 #!/bin/bash
-apt install ca-certificates curl apt-transport-https curl gnupg gnupg2 software-properties-common curl -y
+DEBIAN_FRONTEND=noninteractive apt install ca-certificates curl apt-transport-https curl gnupg gnupg2 software-properties-common curl -y
 
 # SWAPOFF
 swapoff -a
@@ -35,3 +35,4 @@ chmod 644 /etc/apt/sources.list.d/kubernetes.list
 
 # pt updet
 apt update
+DEBIAN_FRONTEND=noninteractive apt install containerd.io kubelet kubeadm kubectl -y
